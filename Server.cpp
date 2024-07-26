@@ -10,41 +10,50 @@
 
 std::mutex OutFileMutex;
 
+// Функция для обработки одного сообщения от одного пользователя в отдельном потоке.
 void ServiceClient(int socketFD)
 {
-    // Получим длину имени пользователя, чтобы знать какой длины мы получим сообщение.
+    // Получаем длину имени пользователя для вычисления длины его сообщения.
     int userNameLength;
     recv(socketFD, &userNameLength, sizeof(int), 0);
-    // Размер сообщения равен 81 символу и имени пользователя.
+
+    // 90 — размер сообщения без имени пользователя.
     int messageSize = 90 + ntohl(userNameLength);
+
+
     // Подготавливаем буфер к чтению.
     char buf[messageSize];
+
+    // Получаем сообщение
     recv(socketFD, buf, messageSize, 0);
 
-    // Блокируем файл для безопасной работы с файлом.
-    OutFileMutex.lock();
 
-    // Открываем файл и записываем
+    // Блокируем файл лога для других потоков.
+    OutFileMutex.lock();
+    // Открываем файл
     std::ofstream OutFile("log.txt", std::ios::app);
-    if (OutFile.is_open())
+    if (OutFile.is_open()) // Если он успешно открыт, записываем в него сообщение.
         OutFile << buf << std::endl;
     else
-        perror("File lox.txt not open.\n");
+        perror("File log.txt not open.\n");
     OutFile.close();
+    // Освобождаем файл
+    OutFileMutex.unlock();
 
-    OutFileMutex.unlock(); // Освобождаем файл
 
-    close(socketFD); // Работа закончена, закрываем соединение.
+    // Клиент обслужен, закрываем соединение.
+    close(socketFD);
 }
 
 int main(int argc, char *argv[])
 {
-    // Проверка аргументов командной строки - номер порта для прослушивания.
+    // Программа должна запускаться с одним аргументом — номером порта для прослушивания.
     if (argc < 2)
     {
         printf("The arguments do not specify a listening port.\n");
         exit(1);
     }
+    // Преобразуем порт из строки в число и проверяем что он задан числом и не равен техническому нулевому порту.
     unsigned short int port = atoi(argv[1]);
     if (port == 0)
     {
@@ -52,8 +61,9 @@ int main(int argc, char *argv[])
         exit(2);
     }
 
-    int sock, listener;
-    struct sockaddr_in addr;
+
+    // Подготавливаем сокет и прослушивание сокета.
+    int listener;
 
     // Инициализируем сокет для работы.
     listener = socket(AF_INET, SOCK_STREAM, 0);
@@ -63,6 +73,8 @@ int main(int argc, char *argv[])
         exit(errno);
     }
 
+    // Адрес для прослушивания подключений.
+    struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -72,21 +84,21 @@ int main(int argc, char *argv[])
         perror("Bind");
         exit(errno);
     }
-
     listen(listener, 1);
 
+    // Цикл принятия подключений.
+    int sock;
     while (1)
     {
-        // Ожидаем подключения
+        // Ожидаем подключение
         sock = accept(listener, NULL, NULL);
-        if (sock < 0)
+        if (sock < 0) // Проверяем, успешное ли оно.
         {
             perror("Accept");
             exit(errno);
         }
-        // Отправляем его обработку в отдельный поток
-        std::thread thr(ServiceClient, sock);
-        thr.detach();
+        // Создаем поток для обработки и отсоединяем от главного процесса.
+        std::thread(ServiceClient, sock).detach();
     }
 
     return 0;
